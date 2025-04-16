@@ -1,0 +1,18 @@
+{
+    "name": "paulo/aws-s3-migrator",
+    "autoload": {
+        "psr-4": {
+            "Paulo\\AwsS3Migracao\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Paulo H N Matos",
+            "email": "paulophdev@gmail.com"
+        }
+    ],
+    "require": {
+        "aws/aws-sdk-php": "^3.337",
+        "vlucas/phpdotenv": "^5.6"
+    }
+}
