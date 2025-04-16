@@ -49,7 +49,7 @@ composer install
 ## 🚀 Executando
 
 ```bash
-php migrate.php
+php index.php
 ```
 
 Ou para acessar via navegador (em ambiente local):
