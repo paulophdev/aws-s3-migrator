@@ -5,11 +5,15 @@ require 'vendor/autoload.php';
 use Aws\S3\S3Client;
 use Dotenv\Dotenv;
 
-// Carrega o .env
+$break = (php_sapi_name() === 'cli') ? "\n" : "<br>";
+
+ini_set('max_execution_time', 0); // 0 = ilimitado
+
+// Carrega .env
 $dotenv = Dotenv::createImmutable(__DIR__);
 $dotenv->load();
 
-// Cria conexão com o banco
+// Conexão com o banco
 $pdo = new PDO(
     "mysql:host={$_ENV['DB_HOST']};port={$_ENV['DB_PORT']};dbname={$_ENV['DB_DATABASE']}",
     $_ENV['DB_USERNAME'],
@@ -37,46 +41,71 @@ $destS3 = new S3Client([
 ]);
 
 // Busca um bucket para migrar
-$stmt = $pdo->query("SELECT id, nome FROM buckets WHERE migrado = 0 LIMIT 1");
+$stmt = $pdo->query("SELECT id, nome FROM buckets WHERE migrado = 0 AND observacao IS NULL LIMIT 1");
 $bucket = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$bucket) {
-    echo "✅ Nenhum bucket pendente para migrar.\n";
+    echo "✅ Nenhum bucket pendente para migrar.{$break}";
     exit;
 }
 
 $bucketName = $bucket['nome'];
 $bucketId   = $bucket['id'];
+$destBucket = 'lista-clientes-all'; // Bucket fixo na conta de destino
 
-echo "📦 Iniciando migração do bucket: $bucketName\n";
+echo "📦 Iniciando migração do bucket: $bucketName para $destBucket/$bucketName/{$break}";
 
-// Retornar bucket
+// Verifica acesso ao bucket de destino
+try {
+    $destS3->listObjectsV2(['Bucket' => $destBucket]);
+    echo "✅ Acesso ao bucket $destBucket confirmado.{$break}";
+} catch (\Throwable $th) {
+    $errorMessage = "Erro ao acessar o bucket $destBucket: " . $th->getMessage();
+    echo $errorMessage . $break;
+    $pdo->prepare("UPDATE buckets SET observacao = ?, data_migracao = NOW() WHERE id = ?")
+        ->execute([$errorMessage, $bucketId]);
+    exit;
+}
+
+// Lista objetos no bucket de origem
 $result = $sourceS3->listObjectsV2([
     'Bucket' => $bucketName,
-    'Prefix' => '', // opcional: exemplo 'imagens/' se quiser filtrar por "pasta"
+    'Prefix' => '', // opcional: ex. 'imagens/' para filtrar por pasta
 ]);
 
 foreach ($result['Contents'] as $object) {
     $key = $object['Key'];
-    echo "🔁 Migrando: $key\n";
+    $destKey = $bucketName . '/' . $key; // Adiciona o nome do bucket como pasta
+    echo "🔁 Migrando: {$key} para {$destBucket}/{$destKey}{$break}";
 
-    // Baixar objeto da origem
-    $data = $sourceS3->getObject([
-        'Bucket' => $bucketName,
-        'Key'    => $key
-    ]);
+    try {
+        // Baixa objeto da origem
+        $data = $sourceS3->getObject([
+            'Bucket' => $bucketName,
+            'Key'    => $key
+        ]);
 
-    // Enviar para bucket de destino
-    $destS3->putObject([
-        'Bucket' => $bucketName,
-        'Key'    => $key,
-        'Body'   => $data['Body'],
-        'ContentType' => $data['ContentType'] ?? 'application/octet-stream'
-    ]);
+        // Envia para bucket de destino com pasta
+        $retorno = $destS3->putObject([
+            'Bucket' => $destBucket, // Usa bucket fixo
+            'Key'    => $destKey,    // Inclui o nome do bucket como prefixo
+            'Body'   => $data['Body'],
+            'ContentType' => $data['ContentType'] ?? 'application/octet-stream'
+        ]);
+
+        echo "✅ Objeto {$key} migrado para {$destBucket}/{$destKey} com sucesso.{$break}";
+    } catch (\Throwable $th) {
+        $errorMessage = "Erro na migração do objeto {$key} para {$destBucket}/{$destKey}: " . $th->getMessage();
+        echo $errorMessage . $break;
+        $pdo->prepare("UPDATE buckets SET observacao = ?, data_migracao = NOW() WHERE id = ?")
+            ->execute([$errorMessage, $bucketId]);
+        break;
+    }
 }
 
-// Marcar como migrado
+// Marca como migrado
 $pdo->prepare("UPDATE buckets SET migrado = 1, data_migracao = NOW() WHERE id = ?")
     ->execute([$bucketId]);
 
-echo "✅ Migração do bucket '$bucketName' finalizada com sucesso.";
+echo "✅ Migração do bucket '{$bucketName}' para '{$destBucket}/{$bucketName}/' finalizada com sucesso.{$break}";
+?>

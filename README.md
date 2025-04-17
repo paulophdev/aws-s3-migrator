@@ -32,6 +32,7 @@ CREATE TABLE buckets (
     nome VARCHAR(255) NOT NULL,
     migrado TINYINT(1) NOT NULL DEFAULT 0,
     data_migracao DATETIME NULL
+    observacao TEXT NULL
 );
 ```
 ---
